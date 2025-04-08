@@ -4,7 +4,7 @@ env:
   variables:
     S3_BUCKET: fraud-detectml1           # ← replace
     AWS_REGION: us-east-1                     # ← replace
-    FEATURE_GROUP_NAME: creditcard-fg
+    FEATURE_GROUP_NAME: creditcard-fg1
     MODEL_PACKAGE_GROUP_NAME: creditcard-mpg
     ENDPOINT_NAME: creditcard-endpoint
 

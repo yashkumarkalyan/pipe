@@ -16,7 +16,7 @@ warnings.filterwarnings(
 # ─── Configuration ────────────────────────────────────────────────────────────
 region     = os.environ.get("AWS_REGION", "us-east-1")
 s3_bucket  = os.environ.get("S3_BUCKET", "fraud-detectml1")
-fg_name    = os.environ.get("FEATURE_GROUP_NAME", "creditcard-fg")
+fg_name    = os.environ.get("FEATURE_GROUP_NAME", "creditcard-fg1")
 
 # ← Your CodeBuild service role ARN for SageMaker
 role_arn   = "arn:aws:iam::419622399030:role/service-role/AmazonSageMakerServiceCatalogProductsUseRole"
