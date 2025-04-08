@@ -1,4 +1,9 @@
-boto3
-sagemaker
 pandas
+numpy
+scikit-learn
 xgboost
+sagemaker
+boto3
+protobuf
+awscli
+joblib
