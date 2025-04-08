@@ -1,80 +1,86 @@
-import os
-import warnings
 import boto3
 import pandas as pd
-import time
-from sagemaker.feature_store.feature_definition import FeatureDefinition, FeatureTypeEnum
+import sagemaker
+import uuid
 from sagemaker.feature_store.feature_group import FeatureGroup
-from sagemaker.session import Session
+from sagemaker.feature_store.feature_definition import FeatureDefinition, FeatureTypeEnum
+from sagemaker import get_execution_role
 from botocore.exceptions import ClientError
+import time
 
-# Suppress warnings
-warnings.filterwarnings("ignore", message="Field name \"json\".*")
+# Set region and session
+REGION = "us-east-1"
+boto3.setup_default_session(region_name=REGION)
+boto_session = boto3.Session(region_name=REGION)
+sagemaker_session = sagemaker.Session(boto_session=boto_session)
+role = "arn:aws:iam::419622399030:role/service-role/AmazonSageMakerServiceCatalogProductsUseRole"
 
-# Config
-region = os.environ.get("AWS_REGION", "us-east-1")
-s3_bucket = "fraud-detectml1"
-fg_name = "creditcard-fg2"
-role_arn = "arn:aws:iam::419622399030:role/service-role/AmazonSageMakerServiceCatalogProductsUseRole"
+# Define constants
+FEATURE_GROUP_NAME = "creditcard-fg2"
+BUCKET_NAME = "fraud-detectml1"
+S3_PATH = f"s3://{BUCKET_NAME}/feature-store/"
 
-# SageMaker session
-boto_sess = boto3.Session(region_name=region)
-session = Session(boto_session=boto_sess)
-sm_client = boto_sess.client("sagemaker")
+# Load and preprocess the dataset
+df = pd.read_csv("creditcard.csv")
+df = df.rename(columns={"scaled_time": "Time", "scaled_amount": "Amount"})
+df["record_id"] = [str(uuid.uuid4()) for _ in range(len(df))]
 
-# Check if feature group exists, delete if yes
+# Initialize SageMaker FeatureGroup
+feature_group = FeatureGroup(name=FEATURE_GROUP_NAME, sagemaker_session=sagemaker_session)
+
+# Delete existing feature group if it exists
+sm_client = boto_session.client("sagemaker", region_name=REGION)
 try:
-    response = sm_client.describe_feature_group(FeatureGroupName=fg_name)
-    print(f"⚠️ Feature Group '{fg_name}' already exists. Deleting...")
-    sm_client.delete_feature_group(FeatureGroupName=fg_name)
-    print("⏳ Waiting 30s for deletion to propagate...")
-    time.sleep(30)
+    sm_client.describe_feature_group(FeatureGroupName=FEATURE_GROUP_NAME)
+    print(f"Feature group '{FEATURE_GROUP_NAME}' exists. Deleting...")
+    sm_client.delete_feature_group(FeatureGroupName=FEATURE_GROUP_NAME)
+    waiter = sm_client.get_waiter("feature_group_deleted")
+    waiter.wait(FeatureGroupName=FEATURE_GROUP_NAME)
+    print("Previous feature group deleted.")
 except ClientError as e:
     if "ResourceNotFound" in str(e):
-        print(f"✅ Feature Group '{fg_name}' does not exist. Proceeding to create.")
+        print("No existing feature group found. Proceeding...")
     else:
         raise e
 
-# Load and prepare data
-df = pd.read_csv("creditcard.csv").head(5).copy()
-df["event_time"] = pd.Timestamp.now().isoformat()
-df = df.reset_index().rename(columns={"index": "record_id"})
+# Define feature definitions
+feature_defs = [
+    FeatureDefinition(feature_name="record_id", feature_type=FeatureTypeEnum.STRING),
+    FeatureDefinition(feature_name="Time", feature_type=FeatureTypeEnum.FRACTIONAL),
+    FeatureDefinition(feature_name="Amount", feature_type=FeatureTypeEnum.FRACTIONAL),
+    FeatureDefinition(feature_name="Class", feature_type=FeatureTypeEnum.INTEGRAL),
+] + [
+    FeatureDefinition(feature_name=f"V{i}", feature_type=FeatureTypeEnum.FRACTIONAL) for i in range(1, 29)
+]
 
-# Clean column names
-df.columns = [c.replace(" ", "_").replace("-", "_") for c in df.columns]
+# Create the feature group
+try:
+    feature_group.create(
+        s3_uri=S3_PATH,
+        record_identifier_name="record_id",
+        event_time_feature_name="Time",
+        role_arn=role,
+        enable_online_store=False,
+        feature_definitions=feature_defs
+    )
+    print(f"Feature group '{FEATURE_GROUP_NAME}' created.")
+except Exception as e:
+    print(f"Failed to create feature group: {e}")
+    raise
 
-# Drop unsupported types
-unsupported = df.select_dtypes(include=["object", "datetime64"]).columns.tolist()
-if unsupported:
-    print(f"⚠️ Dropping unsupported columns: {unsupported}")
-    df = df.drop(columns=unsupported)
+# Wait until feature group is ready
+try:
+    feature_group.wait_for_create()
+    print("Feature group is active.")
+except Exception as e:
+    print(f"Error waiting for feature group creation: {e}")
+    raise
 
-# Drop nulls
-df = df.dropna()
-
-# Define features
-feature_defs = []
-for col, dtype in df.dtypes.items():
-    if col in ["record_id", "event_time"]:
-        continue
-    if pd.api.types.is_integer_dtype(dtype):
-        ftype = FeatureTypeEnum.INTEGRAL
-    else:
-        ftype = FeatureTypeEnum.FRACTIONAL
-    feature_defs.append(FeatureDefinition(feature_name=col, feature_type=ftype))
-
-# Create feature group
-fg = FeatureGroup(name=fg_name, sagemaker_session=session, feature_definitions=feature_defs)
-
-fg.create(
-    s3_uri=f"s3://{s3_bucket}/feature-store/",
-    record_identifier_name="record_id",
-    event_time_feature_name="event_time",
-    role_arn=role_arn,
-    description="Credit card fraud detection features"
-)
-
-# Ingest
-fg.ingest(data_frame=df, max_workers=3, wait=True)
-
-print(f"✅ FeatureGroup '{fg_name}' created and successfully ingested {len(df)} rows.")
+# Ingest records
+try:
+    print("Ingesting top 5 rows to feature store...")
+    feature_group.ingest(data_frame=df.head(5), max_workers=3, wait=True)
+    print("Data ingested successfully.")
+except Exception as e:
+    print(f"Error during data ingestion: {e}")
+    raise
