@@ -12,7 +12,7 @@ train_job = os.environ.get("TRAIN_JOB_NAME")
 
 sm = boto3.client("sagemaker", region_name=region)
 
-# ─── Get training job (fallback to latest completed if not found) ─────────────
+# ─── Get training job ─────────────────────────────────────────────────────────
 def get_training_job_name():
     global train_job
     if train_job:
@@ -40,16 +40,29 @@ def get_model_artifact_s3_path(job_name):
     desc = sm.describe_training_job(TrainingJobName=job_name)
     return desc["ModelArtifacts"]["S3ModelArtifacts"]
 
+# ─── Delete all model packages in the group ───────────────────────────────────
+def delete_model_packages_in_group(name):
+    packages = sm.list_model_packages(ModelPackageGroupName=name)['ModelPackageSummaryList']
+    for pkg in packages:
+        pkg_name = pkg['ModelPackageArn']
+        print(f"🗑️  Deleting model package: {pkg_name}")
+        sm.delete_model_package(ModelPackageName=pkg_name)
+        time.sleep(1)
+
 # ─── Override MPG ─────────────────────────────────────────────────────────────
 def override_model_package_group(name):
     try:
         sm.describe_model_package_group(ModelPackageGroupName=name)
-        print(f"⚠️  ModelPackageGroup '{name}' exists. Deleting...")
+        print(f"⚠️  ModelPackageGroup '{name}' exists. Deleting model packages...")
+        delete_model_packages_in_group(name)
+        print("🧹 All model packages deleted.")
+
         sm.delete_model_package_group(ModelPackageGroupName=name)
+        print("🕐 Waiting for MPG to delete...")
         while True:
             try:
                 sm.describe_model_package_group(ModelPackageGroupName=name)
-                print("…waiting for deletion…")
+                print("…still deleting MPG…")
                 time.sleep(5)
             except ClientError as e:
                 if e.response["Error"]["Code"] == "ValidationException":
