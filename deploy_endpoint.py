@@ -1,5 +1,7 @@
 import os
+import time
 import boto3
+from sagemaker import get_execution_role
 
 region = os.environ['AWS_REGION']
 mpg_name = os.environ['MODEL_PACKAGE_GROUP_NAME']
@@ -17,21 +19,23 @@ models = sm.list_model_packages(
 mp_arn = models['ModelPackageSummaryList'][0]['ModelPackageArn']
 
 # create model
-model_name = 'creditcard-model-'+str(int(time.time()))
+model_name = 'creditcard-model-' + str(int(time.time()))
+role = get_execution_role()
+
 sm.create_model(
     ModelName=model_name,
     PrimaryContainer={'ModelPackageName': mp_arn},
-    ExecutionRoleArn=boto3.client('sts').get_caller_identity()['Arn']
+    ExecutionRoleArn=role
 )
 
 # endpoint config
-config_name = model_name+'-config'
+config_name = model_name + '-config'
 sm.create_endpoint_config(
     EndpointConfigName=config_name,
     ProductionVariants=[{
         'VariantName': 'AllTraffic',
         'ModelName': model_name,
-        'InstanceType': 'ml.m5.large',
+        'InstanceType': 'ml.t2.medium',  # Free-tier eligible instance
         'InitialInstanceCount': 1
     }]
 )
@@ -40,7 +44,7 @@ sm.create_endpoint_config(
 existing = [e['EndpointName'] for e in sm.list_endpoints()['Endpoints']]
 if endpoint_name in existing:
     sm.update_endpoint(EndpointName=endpoint_name, EndpointConfigName=config_name)
-    print(f"Updated endpoint {endpoint_name}")
+    print(f"✅ Updated endpoint: {endpoint_name}")
 else:
     sm.create_endpoint(EndpointName=endpoint_name, EndpointConfigName=config_name)
-    print(f"Created endpoint {endpoint_name}")
+    print(f"✅ Created endpoint: {endpoint_name}")
