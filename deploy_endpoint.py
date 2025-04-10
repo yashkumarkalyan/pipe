@@ -44,7 +44,7 @@ sm.create_endpoint_config(
 existing = [e['EndpointName'] for e in sm.list_endpoints()['Endpoints']]
 if endpoint_name in existing:
     sm.update_endpoint(EndpointName=endpoint_name, EndpointConfigName=config_name)
-    print(f"✅ Updated endpoint: {endpoint_name}")
+    print(f"✅ Updated my endpoint: {endpoint_name}")
 else:
     sm.create_endpoint(EndpointName=endpoint_name, EndpointConfigName=config_name)
     print(f"✅ Created endpoint: {endpoint_name}")
